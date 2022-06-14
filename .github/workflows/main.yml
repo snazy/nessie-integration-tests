@@ -1,0 +1,152 @@
+# Copyright (C) 2021 The Authors of projectnessie
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  schedule:
+    # Run every 12 hours on week days
+    - cron:  '* 4/12 * * 1-5'
+
+jobs:
+  java:
+    name: Nessie/Iceberg/Presto
+    runs-on: ubuntu-latest
+    env:
+      GIT_FETCH_DEPTH: 0
+      GIT_FETCH_OPTION: ""
+      NESSIE_DIR: included-builds/nessie
+      NESSIE_MAIN_REPOSITORY: snazy/nessie
+      NESSIE_MAIN_BRANCH: tools-integration-tests
+      NESSIE_PATCH_REMOTE_NAME: origin
+      NESSIE_PATCH_REPOSITORY: snazy/nessie
+      NESSIE_PATCH_BRANCH: integ-bump/iceberg
+      ICEBERG_DIR: included-builds/iceberg
+      ICEBERG_MAIN_REPOSITORY: snazy/iceberg
+      ICEBERG_MAIN_BRANCH: project-version-file
+      PRESTO_DIR: included-builds/presto
+      PRESTO_MAIN_REPOSITORY: prestodb/presto
+      PRESTO_MAIN_BRANCH: master
+      SPARK_LOCAL_IP: localhost
+
+    steps:
+      - name: Prepare Git
+        run: |
+          git config --global user.email "integrations-testsing@projectnessie.org"
+          git config --global user.name "Integrations Testing [Bot]"
+
+      - name: Checkout Integrations Testing repo
+        uses: actions/checkout@v3
+
+      - name: Checkout Nessie repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{env.NESSIE_MAIN_REPOSITORY}}
+          ref: ${{env.NESSIE_MAIN_BRANCH}}
+          path: ${{env.NESSIE_DIR}}
+          # Need the full history for the rebase below
+          fetch-depth: 0
+
+      - name: Patch Nessie
+        uses: ./.github/actions/patch-git
+        with:
+          name: Nessie
+          local-dir: ${{env.NESSIE_DIR}}
+          main-repository: ${{env.NESSIE_MAIN_REPOSITORY}}
+          patch-repository: ${{env.NESSIE_PATCH_REPOSITORY}}
+          patch-branch: ${{env.NESSIE_PATCH_BRANCH}}
+          patch-remote-name: ${{env.NESSIE_PATCH_REMOTE_NAME}}
+          work-branch: nessie_integtest
+
+      - name: Checkout Iceberg repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{env.ICEBERG_MAIN_REPOSITORY}}
+          ref: ${{env.ICEBERG_MAIN_BRANCH}}
+          path: ${{env.ICEBERG_DIR}}
+
+      - name: Checkout Presto repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{env.PRESTO_MAIN_REPOSITORY}}
+          ref: ${{env.PRESTO_MAIN_BRANCH}}
+          path: ${{env.PRESTO_DIR}}
+
+      # Setup Gradle properties, heap requirements are for the "Integration test w/ Nessie".
+      - name: Setup gradle.properties
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          echo "org.gradle.vfs.watch=false" >> ~/.gradle/gradle.properties
+
+      - name: Set up JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: 11
+
+      - name: Canary builds
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: :nessie:clients:client:jar :iceberg:iceberg-nessie:jar :iceberg:iceberg-core:jar
+
+      - name: Iceberg Nessie test
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: :iceberg:iceberg-nessie:test
+
+      - name: Nessie Spark 3.1 Extensions test
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: :nessie:clients:spark-31-extensions:test :nessie:clients:spark-31-extensions:intTest
+
+      - name: Nessie Spark 3.2 Extensions test
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: :nessie:clients:spark-32-extensions:test :nessie:clients:spark-32-extensions:intTest
+
+      - name: Tools & Integrations tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: intTest
+
+      - name: Publish Nessie + Iceberg to local Maven repo
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: |
+            publishLocal
+            -x :nessie:clients:iceberg-views:publishToMavenLocal
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/org/projectnessie
+            !~/.m2/repository/org/apache/iceberg
+            ~/.m2/wrapper
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml', '**/maven-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Build Presto w/ latest Nessie+Iceberg
+        working-directory: included-builds/presto
+        run: |
+          ./mvnw \
+            install -DskipTests \
+            -Ddep.iceberg.version=$(cat ../iceberg/build/version.txt) \
+            -Ddep.nessie.version=$(cat ../nessie/version.txt)
