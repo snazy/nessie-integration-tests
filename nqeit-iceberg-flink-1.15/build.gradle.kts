@@ -40,7 +40,7 @@ dependencies {
   testRuntimeOnly("org.apache.flink:flink-test-utils-junit:$flinkVersion") { exclude("junit") }
   testRuntimeOnly("org.apache.flink:flink-test-utils:$flinkVersion")
 
-  val hadoopVersion = "2.7.3"
+  val hadoopVersion = "3.3.3"
   testRuntimeOnly("org.apache.hadoop:hadoop-common:$hadoopVersion")
   testRuntimeOnly("org.apache.hadoop:hadoop-hdfs:$hadoopVersion")
 
