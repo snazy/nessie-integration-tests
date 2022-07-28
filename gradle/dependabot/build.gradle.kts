@@ -33,7 +33,7 @@ plugins {
   id("com.github.vlsi.jandex") version "1.82"
   id("net.ltgt.errorprone") version "2.0.2"
   id("org.caffinitas.gradle.testrerun") version "0.1"
-  id("org.jetbrains.gradle.plugin.idea-ext") version "1.1.5"
+  id("org.jetbrains.gradle.plugin.idea-ext") version "1.1.6"
   id("org.projectnessie") version "0.27.3"
   id("org.projectnessie.buildsupport.spotless") version "0.2.4"
   // The above version "includes" the ones below
